@@ -79,25 +79,50 @@ class FeatureEngineer:
     def select_features_by_importance(X, y, n_features=30, cumulative_importance=0.85):
         """
         Select features using XGBoost feature importance
+        Filters out non-numeric columns automatically
         """
-        model = XGBClassifier(n_estimators=100, max_depth=5, random_state=42, verbosity=0)
-        model.fit(X, y)
+        # Filter to only numeric columns
+        X_numeric = X.select_dtypes(include=[np.number]).copy()
         
-        importance_df = pd.DataFrame({
-            'feature': X.columns,
-            'importance': model.feature_importances_
-        }).sort_values('importance', ascending=False)
+        if X_numeric.shape[1] == 0:
+            logger.warning("No numeric features found. Returning first n_features as fallback.")
+            return X.columns[:n_features].tolist(), pd.DataFrame()
         
-        # Select by cumulative importance or n_features
-        cumsum = importance_df['importance'].cumsum() / importance_df['importance'].sum()
-        selected = importance_df[cumsum <= cumulative_importance]['feature'].tolist()
+        logger.info(f"Using {X_numeric.shape[1]} numeric features for importance selection")
         
-        # Ensure minimum features
-        if len(selected) < n_features:
-            selected = importance_df.head(n_features)['feature'].tolist()
-        
-        logger.info(f"Selected {len(selected)} features (importance: {cumulative_importance})")
-        return selected, importance_df
+        # Train XGBoost on numeric features only
+        try:
+            model = XGBClassifier(
+                n_estimators=100,
+                max_depth=5,
+                random_state=42,
+                verbosity=0,
+                use_label_encoder=False,
+                eval_metric='logloss'
+            )
+            model.fit(X_numeric, y)
+            
+            importance_df = pd.DataFrame({
+                'feature': X_numeric.columns,
+                'importance': model.feature_importances_
+            }).sort_values('importance', ascending=False)
+            
+            # Select by cumulative importance or n_features
+            cumsum = importance_df['importance'].cumsum() / importance_df['importance'].sum()
+            selected = importance_df[cumsum <= cumulative_importance]['feature'].tolist()
+            
+            # Ensure minimum features
+            if len(selected) < n_features:
+                selected = importance_df.head(n_features)['feature'].tolist()
+            
+            logger.info(f"Selected {len(selected)} features (importance: {cumulative_importance:.2f})")
+            return selected, importance_df
+            
+        except Exception as e:
+            logger.warning(f"XGBoost feature selection failed: {e}. Using top numeric features.")
+            # Fallback: return top numeric features by variance
+            variances = X_numeric.var().sort_values(ascending=False)
+            return variances.head(n_features).index.tolist(), pd.DataFrame()
     
     @staticmethod
     def create_target(df, forward_window=5, volatility_threshold_pct=1.5):
