@@ -30,12 +30,16 @@ from src.data_loader import DataLoader
 from src.feature_engineering import FeatureEngineer
 from src.models import LSTMModel, TransformerModel
 
+# Create logs directory
+logs_dir = Path('logs')
+logs_dir.mkdir(exist_ok=True)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/batch_training.log'),
+        logging.FileHandler(logs_dir / 'batch_training.log'),
         logging.StreamHandler()
     ]
 )
@@ -61,10 +65,6 @@ class BatchTrainer:
         self.epochs = epochs
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create logs directory
-        self.logs_dir = Path('logs')
-        self.logs_dir.mkdir(exist_ok=True)
         
         # Results tracking
         self.results = {}
@@ -170,7 +170,7 @@ class BatchTrainer:
             accuracy = accuracy_score(y_test, y_pred)
             auc = roc_auc_score(y_test, y_pred_proba)
             precision = (y_pred[y_test == 1].sum() / (y_pred.sum() + 1e-8))
-            recall = (y_pred[y_test == 1].sum() / (y_test.sum() + 1e-8))
+            recall = (y_test.sum() > 0) and (y_pred[y_test == 1].sum() / (y_test.sum() + 1e-8)) or 0
             
             # Save model
             model_path = self.output_dir / f"{symbol}_{timeframe}_{self.model_type}.h5"
@@ -207,6 +207,8 @@ class BatchTrainer:
             
         except Exception as e:
             logger.error(f"✗ Error training {symbol} {timeframe}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def train_all(self, symbols=None, timeframes=None, num_workers=2, resume=False):
@@ -236,6 +238,7 @@ class BatchTrainer:
         
         logger.info(f"Training {len(tasks)} models ({self.model_type}) with {num_workers} workers")
         logger.info(f"Symbols: {len(symbols)}, Timeframes: {len(timeframes)}")
+        logger.info(f"Epochs: {self.epochs}")
         
         # Train in parallel
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
