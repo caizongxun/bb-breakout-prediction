@@ -1,0 +1,64 @@
+# BB Breakout Prediction Configuration
+
+data:
+  symbols:
+    - BTCUSDT
+    - ETHUSDT
+  timeframes:
+    - 15m
+    - 1h
+  lookback_period: 365  # days
+  cache_dir: ./data/raw
+  processed_dir: ./data/processed
+
+model:
+  type: transformer  # lstm, transformer, ensemble, autogluon
+  sequence_length: 30  # candles
+  batch_size: 32
+  epochs: 50
+  learning_rate: 0.001
+  early_stopping_patience: 10
+  
+  # LSTM parameters
+  lstm_units: 128
+  dropout: 0.2
+  
+  # Transformer parameters
+  num_heads: 8
+  head_dim: 64
+  num_blocks: 2
+
+features:
+  auto_engineer: true
+  n_features: 30  # number of features to select
+  cumulative_importance: 0.85  # cumulative feature importance threshold
+  interaction_detection: true
+  autoencoder_enabled: false
+  encoding_dim: 16  # autoencoder latent dimension
+
+training:
+  train_ratio: 0.7
+  val_ratio: 0.15
+  test_ratio: 0.15
+  random_seed: 42
+  shuffle: false  # important for time series!
+
+target:
+  forward_window: 5  # look ahead N candles
+  volatility_threshold_pct: 1.5  # breakout threshold
+
+inference:
+  probability_threshold: 0.6  # confidence threshold
+  batch_inference: false
+
+output:
+  model_dir: ./data/models
+  logs_dir: ./logs
+  results_dir: ./results
+
+backtest:
+  start_date: null  # use all data
+  end_date: null
+  commission: 0.001  # 0.1%
+  initial_capital: 10000
+  position_size: 1.0  # 100% of capital
