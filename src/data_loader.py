@@ -44,14 +44,59 @@ class DataLoader:
             logger.error(f"Error downloading data: {e}")
             raise
     
+    def _parse_timestamp(self, timestamp_col):
+        """
+        Parse timestamp column with automatic format detection
+        Handles: millisecond integers, datetime strings, etc.
+        """
+        if timestamp_col.dtype == 'object':
+            # Try to detect format from first value
+            first_val = str(timestamp_col.iloc[0])
+            
+            # Check if it looks like a datetime string
+            if isinstance(first_val, str) and '-' in first_val:
+                # Format like '2023-04-26 12:00:00'
+                try:
+                    return pd.to_datetime(timestamp_col)
+                except Exception:
+                    pass
+            
+            # Try parsing as number (milliseconds)
+            try:
+                return pd.to_datetime(pd.to_numeric(timestamp_col), unit='ms')
+            except Exception:
+                pass
+        
+        # If numeric, treat as milliseconds
+        if pd.api.types.is_numeric_dtype(timestamp_col):
+            try:
+                return pd.to_datetime(timestamp_col, unit='ms')
+            except Exception:
+                pass
+        
+        # Default: assume it's already datetime or try direct conversion
+        try:
+            return pd.to_datetime(timestamp_col)
+        except Exception as e:
+            logger.warning(f"Could not parse timestamp: {e}")
+            return timestamp_col
+    
     def preprocess(self, df):
         """
         Clean and prepare data
         """
-        # Convert timestamp
+        # Make a copy to avoid SettingWithCopyWarning
+        df = df.copy()
+        
+        # Convert timestamp with smart detection
         if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            df.set_index('timestamp', inplace=True)
+            try:
+                df['timestamp'] = self._parse_timestamp(df['timestamp'])
+                df.set_index('timestamp', inplace=True)
+                logger.info(f"Timestamp parsed successfully")
+            except Exception as e:
+                logger.error(f"Error parsing timestamp: {e}")
+                raise
         
         # Remove NaN
         df = df.dropna()
