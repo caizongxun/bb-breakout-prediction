@@ -62,3 +62,8 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project-specific
+dump.rdb
+.env
+.env.local
