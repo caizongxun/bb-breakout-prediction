@@ -74,10 +74,10 @@ try:
 except Exception as e:
     print(f"Warning: Could not setup console logging: {e}")
 
-# All supported cryptocurrencies
+# All supported cryptocurrencies - CORRECTED SYMBOLS
 SYMBOLS = [
-    'AAVEUDT', 'ADAUSDT', 'ALGOUSDT', 'ARBUSDT', 'ATOMUSDT',
-    'AVAXUSDT', 'BCHUSDT', 'BNBUSDT', 'BICUSDT', 'DOGEUSD',
+    'AAVAUSDT', 'ADAUSDT', 'ALGOUSDT', 'ARBUSDT', 'ATOMUSDT',
+    'AVAXUSDT', 'BCHUSDT', 'BNBUSDT', 'BICUSDT', 'DOGEUSDT',
     'DOTUSDT', 'ETCUSDT', 'ETHUSDT', 'FILUSDT', 'LINKUSDT',
     'LTCUSDT', 'MATICUSDT', 'NEARUSDT', 'OPUSDT', 'SOLUSDT',
     'UNIUSDT', 'XRPUSDT'
