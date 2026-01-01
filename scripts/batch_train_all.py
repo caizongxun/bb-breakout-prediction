@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Batch training script for all cryptocurrencies across multiple timeframes
 
@@ -6,7 +7,7 @@ This script trains models for all supported symbols and timeframes in parallel,
 with automatic checkpointing and progress tracking.
 
 Usage:
-    python scripts/batch_train_all.py --model transformer --epochs 50 --workers 4
+    python scripts/batch_train_all.py --model transformer --epochs 50 --workers 2
     python scripts/batch_train_all.py --model lstm --workers 2 --resume
 """
 
@@ -20,6 +21,7 @@ from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import sys
+import io
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import classification_report, roc_auc_score, accuracy_score
@@ -30,20 +32,47 @@ from src.data_loader import DataLoader
 from src.feature_engineering import FeatureEngineer
 from src.models import LSTMModel, TransformerModel
 
+# Fix encoding for Windows Taiwan (cp950)
+if sys.platform == 'win32':
+    import os
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 # Create logs directory
 logs_dir = Path('logs')
 logs_dir.mkdir(exist_ok=True)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(logs_dir / 'batch_training.log'),
-        logging.StreamHandler()
-    ]
-)
+# Configure logging with UTF-8 encoding
+class UTF8Formatter(logging.Formatter):
+    """Custom formatter for UTF-8 encoding"""
+    def format(self, record):
+        # Replace problematic Unicode characters
+        msg = super().format(record)
+        msg = msg.replace('\u2717', '[ERROR]')
+        msg = msg.replace('\u2713', '[OK]')
+        return msg
+
+# Create logger with custom formatter
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# File handler
+fh = logging.FileHandler(logs_dir / 'batch_training.log', encoding='utf-8')
+fh.setLevel(logging.INFO)
+fh_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+fh.setFormatter(fh_formatter)
+logger.addHandler(fh)
+
+# Console handler
+try:
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch_formatter = UTF8Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch.setFormatter(ch_formatter)
+    logger.addHandler(ch)
+except Exception as e:
+    print(f"Warning: Could not setup console logging: {e}")
 
 # All supported cryptocurrencies
 SYMBOLS = [
@@ -202,11 +231,11 @@ class BatchTrainer:
                 'timestamp': datetime.now().isoformat()
             }
             
-            logger.info(f"✓ {symbol} {timeframe}: Accuracy={accuracy:.4f}, AUC={auc:.4f}")
+            logger.info(f"[OK] {symbol} {timeframe}: Accuracy={accuracy:.4f}, AUC={auc:.4f}")
             return result
             
         except Exception as e:
-            logger.error(f"✗ Error training {symbol} {timeframe}: {e}")
+            logger.error(f"[ERROR] Error training {symbol} {timeframe}: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return None
@@ -227,7 +256,7 @@ class BatchTrainer:
         # Load previous results if resuming
         completed = set()
         if resume and self.results_file.exists():
-            with open(self.results_file, 'r') as f:
+            with open(self.results_file, 'r', encoding='utf-8') as f:
                 self.results = json.load(f)
                 completed = {(r['symbol'], r['timeframe']) for r in self.results.values()}
             logger.info(f"Resuming from {len(completed)} completed models")
@@ -263,8 +292,8 @@ class BatchTrainer:
     
     def save_results(self):
         """Save results to JSON"""
-        with open(self.results_file, 'w') as f:
-            json.dump(self.results, f, indent=2)
+        with open(self.results_file, 'w', encoding='utf-8') as f:
+            json.dump(self.results, f, indent=2, ensure_ascii=False)
         logger.info(f"Results saved: {len(self.results)} models")
     
     def print_summary(self):
@@ -297,8 +326,8 @@ class BatchTrainer:
             
             logger.info(f"\nTimeframe: {tf}")
             logger.info(f"  Models: {len(results_tf)}")
-            logger.info(f"  Avg Accuracy: {np.mean(accuracies):.4f} ± {np.std(accuracies):.4f}")
-            logger.info(f"  Avg AUC: {np.mean(aucs):.4f} ± {np.std(aucs):.4f}")
+            logger.info(f"  Avg Accuracy: {np.mean(accuracies):.4f} +/- {np.std(accuracies):.4f}")
+            logger.info(f"  Avg AUC: {np.mean(aucs):.4f} +/- {np.std(aucs):.4f}")
             logger.info(f"  Best Accuracy: {np.max(accuracies):.4f} ({results_tf[np.argmax(accuracies)]['symbol']})")
             logger.info(f"  Best AUC: {np.max(aucs):.4f} ({results_tf[np.argmax(aucs)]['symbol']})")
         
