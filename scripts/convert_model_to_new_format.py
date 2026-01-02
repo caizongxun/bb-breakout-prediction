@@ -116,10 +116,11 @@ class ModelConverter:
         except Exception as e:
             logger.warning(f"Compile=False method failed: {e}")
         
-        # 方法 3: 权重提取和重建
+        # 方法 3: 权重提取和重建 (使用默认 input_shape)
         try:
             logger.info("Method 3: Extract weights and rebuild...")
-            wrapper_model = self.create_wrapper_model(h5_path)
+            # 使用默认的 input_shape
+            wrapper_model = self.create_wrapper_model(input_shape=(30, 56))
             if not wrapper_model:
                 raise Exception("Failed to create wrapper model")
             
