@@ -73,80 +73,6 @@ class ModelConverter:
         
         return sorted(models)
     
-    def extract_model_config(self, h5_path):
-        """
-        从 H5 文件提取模型配置
-        
-        Args:
-            h5_path: H5 文件路径
-        
-        Returns:
-            dict with model config or None
-        """
-        try:
-            with h5py.File(str(h5_path), 'r') as f:
-                logger.info(f"H5 file keys: {list(f.keys())}")
-                
-                # 尝试获取 model_config
-                if 'model_config' in f.attrs:
-                    config_str = f.attrs['model_config']
-                    if isinstance(config_str, bytes):
-                        config_str = config_str.decode('utf-8')
-                    config = json.loads(config_str)
-                    logger.info(f"Model config found. Model class: {config.get('class_name')}")
-                    return config
-                
-                # 尝试从 model_metadata 获取
-                if 'model_metadata' in f:
-                    metadata = f['model_metadata']
-                    if isinstance(metadata, bytes):
-                        config = json.loads(metadata.decode('utf-8'))
-                        logger.info("Model config found in metadata")
-                        return config
-            
-            logger.warning("No model config found in H5 file")
-            return None
-        except Exception as e:
-            logger.error(f"Error extracting config: {e}")
-            return None
-    
-    def create_wrapper_model(self, original_model_path, input_shape=(30, 56)):
-        """
-        创建包装模型 - 用于加载旧模型权重
-        
-        Args:
-            original_model_path: 原始模型路径
-            input_shape: 输入形状 (seq_length, n_features)
-        
-        Returns:
-            keras model or None
-        """
-        try:
-            logger.info(f"Creating wrapper model with input shape: {input_shape}")
-            
-            # 创建一个通用的 LSTM 模型架构
-            model = keras.Sequential([
-                keras.layers.Input(shape=input_shape),
-                keras.layers.LSTM(64, return_sequences=True),
-                keras.layers.Dropout(0.2),
-                keras.layers.LSTM(32),
-                keras.layers.Dropout(0.2),
-                keras.layers.Dense(16, activation='relu'),
-                keras.layers.Dense(1, activation='sigmoid')
-            ])
-            
-            model.compile(
-                optimizer=keras.optimizers.Adam(learning_rate=0.001),
-                loss='binary_crossentropy',
-                metrics=['accuracy', keras.metrics.AUC(name='auc')]
-            )
-            
-            logger.info("Wrapper model created successfully")
-            return model
-        except Exception as e:
-            logger.error(f"Error creating wrapper model: {e}")
-            return None
-    
     def load_original_model(self, h5_path):
         """
         尝试用多种方法加载原始模型
@@ -167,8 +93,8 @@ class ModelConverter:
                 model = keras.models.load_model(str(h5_path))
             logger.info("✓ Model loaded with standard method")
             return model
-        except Exception as e:
-            logger.warning(f"Standard load failed: {e}")
+        except Exception as e1:
+            logger.warning(f"Standard load failed: {e1}")
         
         # 方法 2: 使用 compile=False
         try:
@@ -211,6 +137,131 @@ class ModelConverter:
         logger.error("Failed to load model with any method")
         return None
     
+    def create_wrapper_model(self, input_shape=(30, 56)):
+        """
+        创建包装模型 - 用于加载旧模型权重
+        
+        Args:
+            input_shape: 输入形状 (seq_length, n_features)
+        
+        Returns:
+            keras model or None
+        """
+        try:
+            logger.info(f"Creating wrapper model with input shape: {input_shape}")
+            
+            # 创建一个通用的 LSTM 模型架构
+            model = keras.Sequential([
+                keras.layers.Input(shape=input_shape),
+                keras.layers.LSTM(64, return_sequences=True),
+                keras.layers.Dropout(0.2),
+                keras.layers.LSTM(32),
+                keras.layers.Dropout(0.2),
+                keras.layers.Dense(16, activation='relu'),
+                keras.layers.Dense(1, activation='sigmoid')
+            ])
+            
+            model.compile(
+                optimizer=keras.optimizers.Adam(learning_rate=0.001),
+                loss='binary_crossentropy',
+                metrics=['accuracy', keras.metrics.AUC(name='auc')]
+            )
+            
+            logger.info("Wrapper model created successfully")
+            return model
+        except Exception as e:
+            logger.error(f"Error creating wrapper model: {e}")
+            return None
+    
+    def save_model_safe(self, model, output_path, model_name):
+        """
+        安全地保存模型 - 尝试多种方法
+        
+        Args:
+            model: 要保存的模型
+            output_path: 输出路径
+            model_name: 模型名称
+        
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            output_path = Path(output_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            saved_model_path = output_path / model_name
+            
+            # 方法 1: 使用 tf.saved_model.save (最可靠)
+            try:
+                logger.info(f"Attempting Method 1: tf.saved_model.save...")
+                tf.saved_model.save(model, str(saved_model_path))
+                logger.info(f"✓ Model saved with tf.saved_model.save")
+                return True
+            except Exception as e1:
+                logger.warning(f"tf.saved_model.save failed: {e1}")
+                
+                # 方法 2: 使用 model.save() with h5 格式
+                try:
+                    logger.info(f"Attempting Method 2: model.save() with h5...")
+                    h5_path = output_path / f"{model_name}.h5"
+                    model.save(str(h5_path))
+                    logger.info(f"✓ Model saved as H5 format")
+                    return True
+                except Exception as e2:
+                    logger.warning(f"model.save() failed: {e2}")
+                    
+                    # 方法 3: 尝试 keras.saving.save_model (如果可用)
+                    try:
+                        logger.info(f"Attempting Method 3: keras.saving.save_model...")
+                        import keras.saving
+                        keras.saving.save_model(
+                            model,
+                            str(saved_model_path),
+                            save_format='keras'
+                        )
+                        logger.info(f"✓ Model saved with keras.saving.save_model")
+                        return True
+                    except Exception as e3:
+                        logger.error(f"All save methods failed: {e3}")
+                        return False
+        
+        except Exception as e:
+            logger.error(f"Error in save_model_safe: {e}")
+            return False
+    
+    def verify_saved_model(self, saved_path):
+        """
+        验证保存的模型是否可以加载
+        
+        Args:
+            saved_path: 保存的模型路径
+        
+        Returns:
+            bool: 是否验证成功
+        """
+        try:
+            logger.info("Verifying converted model...")
+            
+            # 尝试加载模型
+            try:
+                # 方法 1: tf.keras.models.load_model
+                model = keras.models.load_model(str(saved_path))
+                logger.info("✓ Model verified - can be loaded successfully")
+                return True
+            except Exception as e:
+                logger.warning(f"keras.models.load_model failed: {e}")
+                
+                # 方法 2: tf.saved_model.load
+                try:
+                    loaded = tf.saved_model.load(str(saved_path))
+                    logger.info("✓ Model verified with tf.saved_model.load")
+                    return True
+                except Exception as e2:
+                    logger.error(f"Verification failed: {e2}")
+                    return False
+        except Exception as e:
+            logger.error(f"Error verifying model: {e}")
+            return False
+    
     def convert_model(self, h5_path, output_path, model_name):
         """
         转换单个模型
@@ -228,42 +279,32 @@ class ModelConverter:
             logger.info(f"Converting: {model_name}")
             logger.info(f"{'='*60}")
             
-            # 检查输出目录
-            output_path = Path(output_path)
-            output_path.mkdir(parents=True, exist_ok=True)
-            
             # 加载原始模型
             model = self.load_original_model(h5_path)
             if model is None:
                 logger.error(f"Failed to load model: {h5_path}")
                 return False
             
-            # 保存为 SavedModel 格式
+            # 保存为新格式
+            output_path = Path(output_path)
+            output_path.mkdir(parents=True, exist_ok=True)
             saved_model_path = output_path / model_name
-            logger.info(f"Saving as SavedModel format to: {saved_model_path}")
             
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore')
-                keras.saving.save_model(
-                    model,
-                    str(saved_model_path),
-                    save_format='keras'
-                )
+            if not self.save_model_safe(model, output_path, model_name):
+                logger.error("Failed to save model")
+                return False
             
-            logger.info(f"✓ Model saved successfully")
+            # 验证
+            if not self.verify_saved_model(saved_model_path):
+                logger.warning("Verification failed, but model was saved")
             
-            # 验证转换
-            logger.info("Verifying converted model...")
-            loaded_model = keras.saving.load_model(str(saved_model_path))
-            logger.info("✓ Model verified - can be loaded successfully")
-            
-            # 保存模型架构信息
+            # 保存模型信息
             info = {
                 'original_path': str(h5_path),
                 'model_name': model_name,
                 'converted_format': 'keras_v3',
-                'input_shape': model.input_shape,
-                'output_shape': model.output_shape,
+                'input_shape': str(model.input_shape),
+                'output_shape': str(model.output_shape),
                 'layers': len(model.layers),
                 'total_params': model.count_params()
             }
