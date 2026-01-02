@@ -20,13 +20,9 @@ import pandas as pd
 from pathlib import Path
 import logging
 import warnings
+import os
 
-try:
-    from tensorflow import keras
-    from tensorflow.keras.models import load_model
-except ImportError:
-    keras = None
-    load_model = None
+import tensorflow as tf
 
 logger = logging.getLogger(__name__)
 
@@ -116,37 +112,53 @@ class ModelLoader:
         Returns:
             tuple: (model, scaler, features_list)
         """
-        if keras is None or load_model is None:
-            raise ImportError("TensorFlow not installed. Install with: pip install tensorflow")
-        
         paths = self.get_model_path(symbol, timeframe, model_type)
         
-        # 加載模型（修復：兼容不同 Keras 版本）
+        # 加載模型（修復：使用 tf.keras.saving.load_model 以兼容舊版本）
         logger.info(f"Loading model: {symbol} {timeframe} ({model_type})")
+        
         try:
-            # 首先嘗試標準方法
-            model = load_model(paths['model'])
-        except TypeError as e:
-            if "too many positional arguments" in str(e):
-                # 如果是 Keras 版本不兼容問題，嘗試自定義對象
-                logger.warning(f"Standard load failed, trying with custom_objects...")
-                try:
-                    model = load_model(
+            # 方法 1: 嘗試標準加載
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=FutureWarning)
+                model = tf.keras.saving.load_model(paths['model'])
+            logger.info("Model loaded successfully with standard method")
+        except Exception as e1:
+            logger.warning(f"Standard load failed: {e1}")
+            
+            try:
+                # 方法 2: 嘗試用 legacy 加載
+                logger.info("Attempting legacy load method...")
+                with warnings.catch_warnings():
+                    warnings.filterwarnings('ignore', category=FutureWarning)
+                    # 使用 TensorFlow 低層 API
+                    model = tf.keras.models.load_model(
                         paths['model'],
-                        custom_objects=None,
-                        compile=False
+                        compile=False,
+                        safe_mode=False
                     )
                     # 重新編譯模型
                     model.compile(
-                        optimizer='adam',
+                        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
                         loss='binary_crossentropy',
-                        metrics=['accuracy']
+                        metrics=['accuracy', tf.keras.metrics.AUC()]
                     )
-                except Exception as e2:
-                    logger.error(f"Failed to load model with custom_objects: {e2}")
-                    raise e from e2
-            else:
-                raise e
+                logger.info("Model loaded successfully with legacy method")
+            except Exception as e2:
+                logger.error(f"Legacy load also failed: {e2}")
+                # 方法 3: 直接用 h5py 讀取權重
+                logger.info("Attempting weights-only load...")
+                try:
+                    import h5py
+                    # 構建一個新模型並加載權重
+                    with h5py.File(paths['model'], 'r') as f:
+                        # 打印模型架構信息
+                        logger.info(f"H5 file keys: {list(f.keys())}")
+                    # 如果 model_config 存在，嘗試從中重建
+                    raise RuntimeError(f"Unable to load model with any method. Last error: {e2}")
+                except Exception as e3:
+                    logger.error(f"H5PY load failed: {e3}")
+                    raise RuntimeError(f"Failed to load model {paths['model']}: {e3}") from e3
         
         # 加載 scaler
         with open(paths['scaler'], 'rb') as f:
@@ -210,7 +222,8 @@ class ModelLoader:
         
         # 預測（禁用警告）
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+            warnings.filterwarnings('ignore')
+            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
             y_prob = model.predict(X_seq, verbose=0)[0][0]
         
         y_pred = 1 if y_prob > 0.5 else 0
