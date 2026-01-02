@@ -19,11 +19,14 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import logging
+import warnings
 
 try:
     from tensorflow import keras
+    from tensorflow.keras.models import load_model
 except ImportError:
     keras = None
+    load_model = None
 
 logger = logging.getLogger(__name__)
 
@@ -113,14 +116,37 @@ class ModelLoader:
         Returns:
             tuple: (model, scaler, features_list)
         """
-        if keras is None:
+        if keras is None or load_model is None:
             raise ImportError("TensorFlow not installed. Install with: pip install tensorflow")
         
         paths = self.get_model_path(symbol, timeframe, model_type)
         
-        # 加載模型
+        # 加載模型（修復：兼容不同 Keras 版本）
         logger.info(f"Loading model: {symbol} {timeframe} ({model_type})")
-        model = keras.models.load_model(paths['model'])
+        try:
+            # 首先嘗試標準方法
+            model = load_model(paths['model'])
+        except TypeError as e:
+            if "too many positional arguments" in str(e):
+                # 如果是 Keras 版本不兼容問題，嘗試自定義對象
+                logger.warning(f"Standard load failed, trying with custom_objects...")
+                try:
+                    model = load_model(
+                        paths['model'],
+                        custom_objects=None,
+                        compile=False
+                    )
+                    # 重新編譯模型
+                    model.compile(
+                        optimizer='adam',
+                        loss='binary_crossentropy',
+                        metrics=['accuracy']
+                    )
+                except Exception as e2:
+                    logger.error(f"Failed to load model with custom_objects: {e2}")
+                    raise e from e2
+            else:
+                raise e
         
         # 加載 scaler
         with open(paths['scaler'], 'rb') as f:
@@ -182,8 +208,11 @@ class ModelLoader:
         if X_seq is None:
             return None
         
-        # 預測
-        y_prob = model.predict(X_seq, verbose=0)[0][0]
+        # 預測（禁用警告）
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            y_prob = model.predict(X_seq, verbose=0)[0][0]
+        
         y_pred = 1 if y_prob > 0.5 else 0
         
         return {
