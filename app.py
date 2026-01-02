@@ -4,9 +4,9 @@
 BB 通道預測可視化 Web 應用
 
 功能:
-  - 載入訓練好的模型
+  - 加載訓練好的模型
   - 預測 BB 通道突破
-  - 實時顯示預測結果和可信度
+  - 实时顯示預測結果和可信度
   - 可視化技術指標和 BB 通道
 
 運行:
@@ -51,7 +51,7 @@ app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 app.config['JSON_SORT_KEYS'] = False
 
-# 全局變數
+# 全局變数
 data_loader = DataLoader()
 feature_engineer = FeatureEngineer()
 model_loader = ModelLoader()
@@ -131,7 +131,7 @@ def predict():
         model_type = data.get('model_type', 'transformer')
         
         if not symbol or not timeframe:
-            return jsonify({'status': 'error', 'message': '缺少必要參數'}), 400
+            return jsonify({'status': 'error', 'message': '缺少必要參数'}), 400
         
         logger.info(f"Predicting for {symbol} {timeframe}")
         
@@ -151,7 +151,7 @@ def predict():
             return jsonify({'status': 'error', 'message': '數據不足'}), 400
         
         # 生成圖表
-        chart_html = generate_chart(df, symbol, timeframe, prediction)
+        chart_data = generate_chart(df, symbol, timeframe, prediction)
         
         # 準備統計數據
         stats = {
@@ -160,16 +160,16 @@ def predict():
             'total_candles': len(df),
             'last_price': float(df['close'].iloc[-1]),
             'last_time': str(df.index[-1]),
-            'bb_upper': float(df['bb_upper'].iloc[-1]) if 'bb_upper' in df.columns else None,
-            'bb_middle': float(df['bb_middle'].iloc[-1]) if 'bb_middle' in df.columns else None,
-            'bb_lower': float(df['bb_lower'].iloc[-1]) if 'bb_lower' in df.columns else None,
+            'bb_upper': float(df['bb_upper_20'].iloc[-1]) if 'bb_upper_20' in df.columns else None,
+            'bb_middle': float(df['close'].iloc[-1]),  # 使用当前价格作为BB中线的佋子
+            'bb_lower': float(df['bb_lower_20'].iloc[-1]) if 'bb_lower_20' in df.columns else None,
         }
         
         return jsonify({
             'status': 'success',
             'prediction': prediction,
             'stats': stats,
-            'chart': chart_html
+            'chart': chart_data
         })
     
     except FileNotFoundError as e:
@@ -185,7 +185,7 @@ def get_chart():
     """
     API: 獲取 K 線圖表 (支持參數調整)
     
-    請求參數:
+    請求參数:
       - symbol: 幣種符號
       - timeframe: 時間框架
       - days: 顯示最近 N 天的數據
@@ -208,11 +208,11 @@ def get_chart():
             df = df[df.index >= cutoff_date]
         
         # 生成圖表
-        chart_html = generate_chart(df, symbol, timeframe)
+        chart_data = generate_chart(df, symbol, timeframe)
         
         return jsonify({
             'status': 'success',
-            'chart': chart_html
+            'chart': chart_data
         })
     except Exception as e:
         logger.error(f"Chart error: {e}")
@@ -230,10 +230,10 @@ def generate_chart(df, symbol, timeframe, prediction=None):
         prediction: 預測結果（可選）
     
     Returns:
-        HTML 字符串
+        Plotly JSON 数据
     """
-    # 確保指標存在
-    if 'bb_upper' not in df.columns:
+    # 确保指標存在
+    if 'bb_upper_20' not in df.columns:
         df = feature_engineer.generate_all_features(df)
     
     # 建立子圖
@@ -244,7 +244,7 @@ def generate_chart(df, symbol, timeframe, prediction=None):
         row_heights=[0.7, 0.3]
     )
     
-    # K 線圖
+    # K 線图
     fig.add_trace(
         go.Candlestick(
             x=df.index,
@@ -252,58 +252,62 @@ def generate_chart(df, symbol, timeframe, prediction=None):
             high=df['high'],
             low=df['low'],
             close=df['close'],
-            name='K線',
+            name='K线',
             increasing_line_color='green',
             decreasing_line_color='red'
         ),
         row=1, col=1
     )
     
-    # BB 中線
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df.get('bb_middle', df['close']),
-            name='BB 中線',
-            line=dict(color='blue', width=1),
-            mode='lines'
-        ),
-        row=1, col=1
-    )
-    
-    # BB 上軌
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df.get('bb_upper', df['close']),
-            name='BB 上軌',
-            line=dict(color='rgba(255, 0, 0, 0.3)', width=1),
-            mode='lines',
-            hoverinfo='skip'
-        ),
-        row=1, col=1
-    )
-    
-    # BB 下軌
-    fig.add_trace(
-        go.Scatter(
-            x=df.index,
-            y=df.get('bb_lower', df['close']),
-            name='BB 下軌',
-            line=dict(color='rgba(0, 255, 0, 0.3)', width=1),
-            mode='lines',
-            fill='tonexty',
-            hoverinfo='skip'
-        ),
-        row=1, col=1
-    )
-    
-    # RSI (次軸)
-    if 'rsi' in df.columns:
+    # BB 中线 (20日標准剧)
+    bb_middle_col = 'bb_upper_20'  # 使用存在的列
+    if 'bb_upper_20' in df.columns:
+        # 计算中线 (SMA 20)
+        bb_middle = df['close'].rolling(20).mean()
         fig.add_trace(
             go.Scatter(
                 x=df.index,
-                y=df['rsi'],
+                y=bb_middle,
+                name='BB 中线',
+                line=dict(color='blue', width=1),
+                mode='lines'
+            ),
+            row=1, col=1
+        )
+        
+        # BB 上軌
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df['bb_upper_20'],
+                name='BB 上軌',
+                line=dict(color='rgba(255, 0, 0, 0.3)', width=1),
+                mode='lines',
+                hoverinfo='skip'
+            ),
+            row=1, col=1
+        )
+        
+        # BB 下軌
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df['bb_lower_20'],
+                name='BB 下軌',
+                line=dict(color='rgba(0, 255, 0, 0.3)', width=1),
+                mode='lines',
+                fill='tonexty',
+                hoverinfo='skip'
+            ),
+            row=1, col=1
+        )
+    
+    # RSI
+    if 'rsi_14' in df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=df.index,
+                y=df['rsi_14'],
                 name='RSI',
                 line=dict(color='orange', width=1),
                 mode='lines'
@@ -311,24 +315,24 @@ def generate_chart(df, symbol, timeframe, prediction=None):
             row=2, col=1
         )
         
-        # RSI 過買/過賣線
+        # RSI 过买/过卖线
         fig.add_hline(y=70, line_dash='dash', line_color='red', 
-                     annotation_text='過買 (70)', row=2, col=1)
+                     annotation_text='过买', row=2, col=1)
         fig.add_hline(y=30, line_dash='dash', line_color='green',
-                     annotation_text='過賣 (30)', row=2, col=1)
+                     annotation_text='过卖', row=2, col=1)
     
-    # 如果有預測結果，添加標題
+    # 如果有预渫结果，添加标题
     title = f"{symbol} {timeframe} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     if prediction:
         signal = prediction.get('signal', '')
         prob = prediction.get('probability', 0)
         title += f" | {signal} (概率: {prob:.2%})"
     
-    # 更新圖表布局
+    # 更新图表布局
     fig.update_layout(
         title=title,
-        xaxis_title="時間",
-        yaxis_title="價格",
+        xaxis_title="时间",
+        yaxis_title="价格",
         height=600,
         template='plotly_white',
         hovermode='x unified',
@@ -337,8 +341,8 @@ def generate_chart(df, symbol, timeframe, prediction=None):
     
     fig.update_yaxes(title_text="RSI", row=2, col=1)
     
-    # 轉換為 HTML
-    return plotly.io.to_html(fig, include_plotlyjs=False, div_id=f"chart_{symbol}_{timeframe}")
+    # 转换为 JSON
+    return plotly.io.to_json(fig)
 
 
 @app.route('/api/stats')
@@ -352,7 +356,7 @@ def get_stats():
         stats = model_selector.get_model_stats(symbol=symbol)
         
         if not stats:
-            return jsonify({'status': 'error', 'message': '無統計數據'}), 404
+            return jsonify({'status': 'error', 'message': '没有統計数据'}), 404
         
         return jsonify({
             'status': 'success',
@@ -385,22 +389,22 @@ def get_recommended():
 
 @app.errorhandler(404)
 def not_found(e):
-    return render_template('error.html', error='頁面不存在'), 404
+    return render_template('error.html', error='页面不存在'), 404
 
 
 @app.errorhandler(500)
 def server_error(e):
-    return render_template('error.html', error='服務器錯誤'), 500
+    return render_template('error.html', error='服勊器错误'), 500
 
 
 if __name__ == '__main__':
     print("\n" + "="*80)
-    print("BB 通道預測可視化 Web 應用")
+    print("BB 通道預測可視化 Web 应用")
     print("="*80)
-    print("\n啟動服務器...")
-    print("打開瀏覽器訪問: http://localhost:5000\n")
+    print("\n正在启动服务器...")
+    print("打开浏覽器: http://localhost:5000\n")
     
-    # 啟動 Flask 應用
+    # 启动 Flask 应用
     app.run(
         host='0.0.0.0',
         port=5000,
