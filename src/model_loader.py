@@ -3,10 +3,10 @@
 """
 訓練好的模型加載和推理模塊
 
-一個模型有 3 個檔案：
-  1. .h5 - 神經網路模型權重
-  2. _scaler.pkl - 特徵標準化器
-  3. _features.pkl - 選中的特徵列表
+支援的模型格式:
+  1. SavedModel (推荐）
+  2. H5 (备选)
+  3. 虛擬模型 (容错)
 
 使用方式:
   loader = ModelLoader()
@@ -121,9 +121,16 @@ class ModelLoader:
         Returns:
             str or None
         """
-        converted_path = self.converted_model_dir / f"{symbol}_{timeframe}_{model_type}"
+        model_name = f"{symbol}_{timeframe}_{model_type}"
+        converted_path = self.converted_model_dir / model_name
         if converted_path.exists():
             return str(converted_path)
+        
+        # 也棂查 H5 子自展
+        h5_path = self.converted_model_dir / f"{model_name}.h5"
+        if h5_path.exists():
+            return str(h5_path)
+        
         return None
     
     def load_model(self, symbol, timeframe, model_type='transformer'):
@@ -132,8 +139,9 @@ class ModelLoader:
         
         优先级:
         1. 转换后的 SavedModel 格式
-        2. 原始 H5 格式 (不同的加载方法)
-        3. 虛擬模型
+        2. 转换后的 H5 格式
+        3. 原始 H5 格式 (不同的加载方法)
+        4. 虛擬模型
         
         Args:
             symbol: 币种符号
@@ -145,26 +153,48 @@ class ModelLoader:
         """
         logger.info(f"Loading model: {symbol} {timeframe} ({model_type})")
         
-        # 优先级 1: 检查转换后的模型
+        # 优先级 1: 棂查转换后的模型
         converted_path = self.get_converted_model_path(symbol, timeframe, model_type)
         if converted_path:
             logger.info(f"Found converted model at: {converted_path}")
-            try:
-                logger.info("Loading converted SavedModel...")
-                model = keras.saving.load_model(converted_path)
-                logger.info("✓ Converted model loaded successfully")
-                
-                # 丢弃 H5 模型，正常加载 scaler 和 features
-                paths = self.get_model_path(symbol, timeframe, model_type)
-                with open(paths['scaler'], 'rb') as f:
-                    scaler = pickle.load(f)
-                with open(paths['features'], 'rb') as f:
-                    features = pickle.load(f)
-                
-                logger.info(f"Successfully loaded: {len(features)} features")
-                return model, scaler, features
-            except Exception as e:
-                logger.warning(f"Failed to load converted model: {e}")
+            
+            # 方法 A: SavedModel 目录
+            if Path(converted_path).is_dir():
+                try:
+                    logger.info("Loading converted SavedModel (tf.saved_model.load)...")
+                    model = tf.saved_model.load(converted_path)
+                    logger.info("✓ SavedModel loaded successfully")
+                    
+                    # 正常加载 scaler 和 features
+                    paths = self.get_model_path(symbol, timeframe, model_type)
+                    with open(paths['scaler'], 'rb') as f:
+                        scaler = pickle.load(f)
+                    with open(paths['features'], 'rb') as f:
+                        features = pickle.load(f)
+                    
+                    logger.info(f"Successfully loaded: {len(features)} features")
+                    return model, scaler, features
+                except Exception as e:
+                    logger.warning(f"SavedModel load failed: {e}")
+            
+            # 方法 B: H5 文件
+            elif Path(converted_path).is_file():
+                try:
+                    logger.info("Loading converted H5 file...")
+                    model = keras.models.load_model(converted_path)
+                    logger.info("✓ Converted H5 loaded successfully")
+                    
+                    # 正常加载 scaler 和 features
+                    paths = self.get_model_path(symbol, timeframe, model_type)
+                    with open(paths['scaler'], 'rb') as f:
+                        scaler = pickle.load(f)
+                    with open(paths['features'], 'rb') as f:
+                        features = pickle.load(f)
+                    
+                    logger.info(f"Successfully loaded: {len(features)} features")
+                    return model, scaler, features
+                except Exception as e:
+                    logger.warning(f"Converted H5 load failed: {e}")
         
         # 优先级 2-4: 加載原始 H5 模型
         paths = self.get_model_path(symbol, timeframe, model_type)
@@ -172,7 +202,7 @@ class ModelLoader:
         
         model = None
         
-        # 方法 1: 标准加載
+        # 方法 1: 标准加载
         try:
             logger.info("Trying standard load method...")
             with warnings.catch_warnings():
@@ -221,7 +251,7 @@ class ModelLoader:
         with open(paths['scaler'], 'rb') as f:
             scaler = pickle.load(f)
         
-        # 加載特徵列表
+        # 加載特征列表
         with open(paths['features'], 'rb') as f:
             features = pickle.load(f)
         
