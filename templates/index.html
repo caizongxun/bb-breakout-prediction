@@ -315,21 +315,21 @@
                 <div id="successMsg" class="success hidden"></div>
                 
                 <div class="form-group">
-                    <label for="symbol">交易对</label>
+                    <label for="symbol">交易寶</label>
                     <select id="symbol" onchange="updateTimeframes()">
-                        <option value="">-- 选择交易对 --</option>
+                        <option value="">-- 選拧交易寶 --</option>
                     </select>
                 </div>
                 
                 <div class="form-group">
-                    <label for="timeframe">时间框架</label>
+                    <label for="timeframe">時間框架</label>
                     <select id="timeframe" onchange="updateModelTypes()">
-                        <option value="">-- 选择时间框架 --</option>
+                        <option value="">-- 選拧時間框架 --</option>
                     </select>
                 </div>
                 
                 <div class="form-group">
-                    <label for="modelType">模型类型</label>
+                    <label for="modelType">模型類變</label>
                     <select id="modelType">
                         <option value="transformer">Transformer</option>
                         <option value="lstm">LSTM</option>
@@ -351,7 +351,7 @@
                     <h3>📊 K线图 + BB 通道 + RSI</h3>
                     <div id="loading" class="loading hidden">
                         <div class="spinner"></div>
-                        <p>正在加載数据中...</p>
+                        <p>正在加載數据中...</p>
                     </div>
                     <div id="chart"></div>
                 </div>
@@ -375,7 +375,7 @@
                 .then(resp => resp.json())
                 .then(data => {
                     if (data.status === 'success') {
-                        // 组织模型
+                        // 組織模型
                         allModels = {};
                         data.data.forEach(m => {
                             if (!allModels[m.symbol]) {
@@ -398,16 +398,16 @@
                         });
                     }
                 })
-                .catch(err => showError('Failed to load models: ' + err));
+                .catch(err => showError('加載模型失敗: ' + err));
         }
         
-        // 更新时间框架
+        // 更新時間框架
         function updateTimeframes() {
             const symbol = document.getElementById('symbol').value;
             const timeframeSelect = document.getElementById('timeframe');
             
-            // 清空目前选项
-            timeframeSelect.innerHTML = '<option value="">-- 选择时间框架 --</option>';
+            // 清空目前選項
+            timeframeSelect.innerHTML = '<option value="">-- 選拧時間框架 --</option>';
             
             if (symbol && allModels[symbol]) {
                 Object.keys(allModels[symbol]).forEach(tf => {
@@ -419,7 +419,7 @@
             }
         }
         
-        // 更新模型类型
+        // 更新模型類變
         function updateModelTypes() {
             const symbol = document.getElementById('symbol').value;
             const timeframe = document.getElementById('timeframe').value;
@@ -444,7 +444,7 @@
             const modelType = document.getElementById('modelType').value;
             
             if (!symbol || !timeframe || !modelType) {
-                showError('请选择所有必需參数');
+                showError('請選拧所有必需參數');
                 return;
             }
             
@@ -465,24 +465,24 @@
                     displayChart(data.chart);
                     showSuccess(`上次更新: ${new Date().toLocaleTimeString()}`);
                 } else {
-                    showError('预测失败: ' + data.message);
+                    showError('预测失敗: ' + data.message);
                 }
             })
-            .catch(err => showError('预测异常: ' + err))
+            .catch(err => showError('预测異常: ' + err))
             .finally(() => {
                 btn.disabled = false;
                 showLoading(false);
             });
         }
         
-        // 显示预测结果
+        // 顯示预测結果
         function displayPredictionResult(pred, stats) {
             const resultDiv = document.getElementById('predictionResult');
             const isBullish = pred.prediction === 1;
             
             resultDiv.innerHTML = `
                 <div class="result-item">
-                    <div class="label">信号</div>
+                    <div class="label">信號</div>
                     <div class="value ${isBullish ? 'signal-bullish' : 'signal-bearish'}">
                         ${pred.signal}
                     </div>
@@ -496,18 +496,18 @@
                     <div class="value">${(pred.confidence * 100).toFixed(1)}%</div>
                 </div>
                 <div class="result-item">
-                    <div class="label">强度</div>
+                    <div class="label">強度</div>
                     <div class="value">${(pred.strength * 100).toFixed(1)}%</div>
                 </div>
             `;
             
             resultDiv.classList.remove('hidden');
             
-            // 显示統計信息
+            // 顯示統計信息
             const statsDiv = document.getElementById('statsGrid');
             statsDiv.innerHTML = `
                 <div class="stat-card">
-                    <div class="label">当前价格</div>
+                    <div class="label">當前價格</div>
                     <div class="value">$${stats.last_price.toFixed(4)}</div>
                 </div>
                 <div class="stat-card">
@@ -515,7 +515,7 @@
                     <div class="value">${stats.bb_upper ? '$' + stats.bb_upper.toFixed(4) : 'N/A'}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="label">BB 中线</div>
+                    <div class="label">BB 中線</div>
                     <div class="value">${stats.bb_middle ? '$' + stats.bb_middle.toFixed(4) : 'N/A'}</div>
                 </div>
                 <div class="stat-card">
@@ -526,16 +526,14 @@
             statsDiv.classList.remove('hidden');
         }
         
-        // 显示图表
-        function displayChart(chartHtml) {
-            document.getElementById('chart').innerHTML = chartHtml;
-            // 重新済查 Plotly 图表
-            Plotly.purge('chart');
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = chartHtml;
-            const script = tempDiv.querySelector('script');
-            if (script) {
-                eval(script.innerHTML);
+        // 顯示图表 - 改为使用 Plotly.newPlot()
+        function displayChart(chartJson) {
+            try {
+                // 使用 Plotly.newPlot() 済查圖表
+                Plotly.newPlot('chart', chartJson.data, chartJson.layout, {responsive: true});
+            } catch (e) {
+                console.error('Chart rendering error:', e);
+                showError('图表済查失敗: ' + e.message);
             }
         }
         
@@ -570,7 +568,7 @@
                 .catch(err => console.error('Error loading recommended models:', err));
         }
         
-        // 辅助函数
+        // 辅助函數
         function showLoading(show) {
             document.getElementById('loading').classList.toggle('hidden', !show);
         }
