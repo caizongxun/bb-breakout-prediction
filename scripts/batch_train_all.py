@@ -6,6 +6,8 @@ Batch training script for all cryptocurrencies across multiple timeframes
 This script trains models for all supported symbols and timeframes in parallel,
 with automatic checkpointing and progress tracking.
 
+Supports both local and Colab execution.
+
 Usage:
     python scripts/batch_train_all.py --model transformer --epochs 50 --workers 2
     python scripts/batch_train_all.py --model lstm --workers 2 --resume
@@ -19,12 +21,19 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from datetime import datetime
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import io
+import os
 from tqdm import tqdm
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import classification_report, roc_auc_score, accuracy_score
+from sklearn.metrics import roc_auc_score, accuracy_score
+
+# Ensure UTF-8 encoding
+if sys.platform == 'win32':
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -32,28 +41,11 @@ from src.data_loader import DataLoader
 from src.feature_engineering import FeatureEngineer
 from src.models import LSTMModel, TransformerModel
 
-# Fix encoding for Windows Taiwan (cp950)
-if sys.platform == 'win32':
-    import os
-    os.environ['PYTHONIOENCODING'] = 'utf-8'
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-
 # Create logs directory
 logs_dir = Path('logs')
 logs_dir.mkdir(exist_ok=True)
 
-# Configure logging with UTF-8 encoding
-class UTF8Formatter(logging.Formatter):
-    """Custom formatter for UTF-8 encoding"""
-    def format(self, record):
-        # Replace problematic Unicode characters
-        msg = super().format(record)
-        msg = msg.replace('\u2717', '[ERROR]')
-        msg = msg.replace('\u2713', '[OK]')
-        return msg
-
-# Create logger with custom formatter
+# Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
@@ -68,13 +60,13 @@ logger.addHandler(fh)
 try:
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
-    ch_formatter = UTF8Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    ch_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     ch.setFormatter(ch_formatter)
     logger.addHandler(ch)
 except Exception as e:
     print(f"Warning: Could not setup console logging: {e}")
 
-# All supported cryptocurrencies - CORRECTED SYMBOLS
+# All supported cryptocurrencies
 SYMBOLS = [
     'AAVAUSDT', 'ADAUSDT', 'ALGOUSDT', 'ARBUSDT', 'ATOMUSDT',
     'AVAXUSDT', 'BCHUSDT', 'BNBUSDT', 'BICUSDT', 'DOGEUSDT',
@@ -89,18 +81,19 @@ TIMEFRAMES = ['15m', '1h']
 class BatchTrainer:
     """Batch training manager for multiple symbols and timeframes"""
     
-    def __init__(self, model_type='lstm', epochs=50, output_dir='./data/models'):
+    def __init__(self, model_type='lstm', epochs=50, output_dir='./data/models', use_colab=False):
         self.model_type = model_type
         self.epochs = epochs
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.use_colab = use_colab
         
         # Results tracking
         self.results = {}
         self.results_file = self.output_dir / 'training_results.json'
         self.loader = DataLoader()
         self.engineer = FeatureEngineer()
-        
+    
     def create_sequences(self, data, labels, seq_length=30):
         """Create sequence data for neural networks"""
         X, y = [], []
@@ -112,13 +105,16 @@ class BatchTrainer:
     def train_single_model(self, symbol, timeframe):
         """
         Train a single model for a symbol and timeframe
+        
+        Returns:
+            dict with training results or None if failed
         """
         try:
             logger.info(f"Training {symbol} {timeframe} ({self.model_type})...")
             
             # Load data
             df = self.loader.load(symbol, timeframe)
-            if len(df) < 500:  # Minimum data requirement
+            if len(df) < 500:
                 logger.warning(f"Skipping {symbol} {timeframe}: insufficient data ({len(df)} candles)")
                 return None
             
@@ -134,8 +130,8 @@ class BatchTrainer:
             X = df[feature_cols].dropna()
             y = df['target_breakout'].loc[X.index]
             
-            if len(X) < 100:  # Minimum after NaN removal
-                logger.warning(f"Skipping {symbol} {timeframe}: insufficient data after cleaning")
+            if len(X) < 100:
+                logger.warning(f"Skipping {symbol} {timeframe}: insufficient cleaned data")
                 return None
             
             # Feature selection
@@ -153,7 +149,7 @@ class BatchTrainer:
             seq_length = 30
             X_seq, y_seq = self.create_sequences(X_scaled.values, y.values, seq_length)
             
-            if len(X_seq) < 100:  # Minimum sequences
+            if len(X_seq) < 100:
                 logger.warning(f"Skipping {symbol} {timeframe}: insufficient sequences")
                 return None
             
@@ -169,8 +165,12 @@ class BatchTrainer:
             y_test = y_seq[train_size+val_size:]
             
             # Train model
-            import tensorflow as tf
-            from tensorflow import keras
+            try:
+                import tensorflow as tf
+                from tensorflow import keras
+            except ImportError:
+                logger.error("TensorFlow not installed. Install with: pip install tensorflow")
+                raise
             
             if self.model_type == 'lstm':
                 model = LSTMModel.create(seq_length, X_train.shape[2], lstm_units=128)
@@ -189,7 +189,7 @@ class BatchTrainer:
                 epochs=self.epochs,
                 batch_size=32,
                 callbacks=[early_stop],
-                verbose=0  # Suppress output for batch processing
+                verbose=0
             )
             
             # Evaluate
@@ -201,18 +201,29 @@ class BatchTrainer:
             precision = (y_pred[y_test == 1].sum() / (y_pred.sum() + 1e-8))
             recall = (y_test.sum() > 0) and (y_pred[y_test == 1].sum() / (y_test.sum() + 1e-8)) or 0
             
-            # Save model
+            # Save model files
             model_path = self.output_dir / f"{symbol}_{timeframe}_{self.model_type}.h5"
-            model.save(model_path)
+            try:
+                model.save(model_path)
+            except Exception as e:
+                logger.warning(f"Could not save model file: {e}")
+                model_path = None
             
-            # Save scaler and features
+            # Save scaler
             scaler_path = self.output_dir / f"{symbol}_{timeframe}_scaler.pkl"
-            with open(scaler_path, 'wb') as f:
-                pickle.dump(scaler, f)
+            try:
+                with open(scaler_path, 'wb') as f:
+                    pickle.dump(scaler, f)
+            except Exception as e:
+                logger.warning(f"Could not save scaler: {e}")
             
+            # Save features
             features_path = self.output_dir / f"{symbol}_{timeframe}_features.pkl"
-            with open(features_path, 'wb') as f:
-                pickle.dump(selected_features, f)
+            try:
+                with open(features_path, 'wb') as f:
+                    pickle.dump(selected_features, f)
+            except Exception as e:
+                logger.warning(f"Could not save features: {e}")
             
             result = {
                 'symbol': symbol,
@@ -223,21 +234,19 @@ class BatchTrainer:
                 'precision': float(precision),
                 'recall': float(recall),
                 'f1': float(2 * precision * recall / (precision + recall + 1e-8)),
-                'train_size': len(X_train),
-                'test_size': len(X_test),
-                'n_features': len(selected_features),
+                'train_size': int(len(X_train)),
+                'test_size': int(len(X_test)),
+                'n_features': int(len(selected_features)),
                 'epochs_trained': len(history.history['loss']),
-                'model_path': str(model_path),
+                'model_path': str(model_path) if model_path else None,
                 'timestamp': datetime.now().isoformat()
             }
             
-            logger.info(f"[OK] {symbol} {timeframe}: Accuracy={accuracy:.4f}, AUC={auc:.4f}")
+            logger.info(f"OK: {symbol} {timeframe} - Accuracy={accuracy:.4f}, AUC={auc:.4f}")
             return result
             
         except Exception as e:
-            logger.error(f"[ERROR] Error training {symbol} {timeframe}: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"Error training {symbol} {timeframe}: {str(e)[:200]}")
             return None
     
     def train_all(self, symbols=None, timeframes=None, num_workers=2, resume=False):
@@ -256,18 +265,25 @@ class BatchTrainer:
         # Load previous results if resuming
         completed = set()
         if resume and self.results_file.exists():
-            with open(self.results_file, 'r', encoding='utf-8') as f:
-                self.results = json.load(f)
-                completed = {(r['symbol'], r['timeframe']) for r in self.results.values()}
-            logger.info(f"Resuming from {len(completed)} completed models")
+            try:
+                with open(self.results_file, 'r', encoding='utf-8') as f:
+                    self.results = json.load(f)
+                    completed = {(r['symbol'], r['timeframe']) for r in self.results.values()}
+                logger.info(f"Resuming from {len(completed)} completed models")
+            except Exception as e:
+                logger.warning(f"Could not load previous results: {e}")
         
         # Create task list
         tasks = [(s, t) for s in symbols for t in timeframes 
                 if (s, t) not in completed]
         
-        logger.info(f"Training {len(tasks)} models ({self.model_type}) with {num_workers} workers")
-        logger.info(f"Symbols: {len(symbols)}, Timeframes: {len(timeframes)}")
-        logger.info(f"Epochs: {self.epochs}")
+        logger.info(f"Starting training: {len(tasks)} models ({self.model_type})")
+        logger.info(f"Workers: {num_workers}, Epochs: {self.epochs}")
+        
+        if len(tasks) == 0:
+            logger.info("All models already trained.")
+            self.print_summary()
+            return
         
         # Train in parallel
         with ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -276,25 +292,26 @@ class BatchTrainer:
                 for symbol, timeframe in tasks
             ]
             
-            for i, future in enumerate(tqdm(futures, total=len(futures), desc="Training Progress")):
+            for i, future in enumerate(tqdm(futures, total=len(futures), desc="Training")):
                 result = future.result()
                 if result:
                     key = f"{result['symbol']}_{result['timeframe']}"
                     self.results[key] = result
                     
-                    # Save results incrementally
-                    if (i + 1) % 5 == 0:
-                        self.save_results()
+                    # Save results after every model (for Colab file upload)
+                    self.save_results()
         
-        # Final save
-        self.save_results()
+        # Final summary
         self.print_summary()
     
     def save_results(self):
         """Save results to JSON"""
-        with open(self.results_file, 'w', encoding='utf-8') as f:
-            json.dump(self.results, f, indent=2, ensure_ascii=False)
-        logger.info(f"Results saved: {len(self.results)} models")
+        try:
+            with open(self.results_file, 'w', encoding='utf-8') as f:
+                json.dump(self.results, f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved: {len(self.results)} models")
+        except Exception as e:
+            logger.error(f"Error saving results: {e}")
     
     def print_summary(self):
         """Print training summary statistics"""
@@ -328,8 +345,10 @@ class BatchTrainer:
             logger.info(f"  Models: {len(results_tf)}")
             logger.info(f"  Avg Accuracy: {np.mean(accuracies):.4f} +/- {np.std(accuracies):.4f}")
             logger.info(f"  Avg AUC: {np.mean(aucs):.4f} +/- {np.std(aucs):.4f}")
-            logger.info(f"  Best Accuracy: {np.max(accuracies):.4f} ({results_tf[np.argmax(accuracies)]['symbol']})")
-            logger.info(f"  Best AUC: {np.max(aucs):.4f} ({results_tf[np.argmax(aucs)]['symbol']})")
+            best_acc_idx = np.argmax(accuracies)
+            best_auc_idx = np.argmax(aucs)
+            logger.info(f"  Best Accuracy: {np.max(accuracies):.4f} ({results_tf[best_acc_idx]['symbol']})")
+            logger.info(f"  Best AUC: {np.max(aucs):.4f} ({results_tf[best_auc_idx]['symbol']})")
         
         # Overall statistics
         all_accuracies = [r['accuracy'] for r in results_list]
@@ -363,6 +382,7 @@ def main():
     parser.add_argument('--timeframes', nargs='+', default=None, help='Timeframes (default: 15m 1h)')
     parser.add_argument('--output-dir', type=str, default='./data/models', help='Output directory')
     parser.add_argument('--resume', action='store_true', help='Resume from last checkpoint')
+    parser.add_argument('--colab', action='store_true', help='Colab mode (optimized for Google Colab)')
     
     args = parser.parse_args()
     
@@ -370,7 +390,8 @@ def main():
     trainer = BatchTrainer(
         model_type=args.model,
         epochs=args.epochs,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        use_colab=args.colab
     )
     
     # Train
