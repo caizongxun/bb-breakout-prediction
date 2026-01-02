@@ -4,7 +4,7 @@
 訓練好的模型加載和推理模塊
 
 一個模型有 3 個檔案：
-  1. .h5 - 神經網絡模型權重
+  1. .h5 - 神經網路模型權重
   2. _scaler.pkl - 特徵標準化器
   3. _features.pkl - 選中的特徵列表
 
@@ -51,9 +51,11 @@ class ModelLoader:
         """
         models = {}
         
-        # 掃描所有 .h5 檔案
-        for h5_file in self.model_dir.glob('*_transformer.h5') | self.model_dir.glob('*_lstm.h5'):
-            # 解析檔名
+        # 掃描所有 .h5 文件（修復：不用 | 操作符）
+        h5_files = list(self.model_dir.glob('*_transformer.h5')) + list(self.model_dir.glob('*_lstm.h5'))
+        
+        for h5_file in h5_files:
+            # 解析文件名
             parts = h5_file.stem.split('_')
             if len(parts) >= 3:
                 symbol = parts[0]
@@ -65,7 +67,8 @@ class ModelLoader:
                 if timeframe not in models[symbol]:
                     models[symbol][timeframe] = []
                 
-                models[symbol][timeframe].append(model_type)
+                if model_type not in models[symbol][timeframe]:
+                    models[symbol][timeframe].append(model_type)
         
         return models
     
@@ -100,7 +103,7 @@ class ModelLoader:
     
     def load_model(self, symbol, timeframe, model_type='transformer'):
         """
-        載入訓練好的模型及其配置
+        加載訓練好的模型及其配置
         
         Args:
             symbol: 幣種符號
@@ -115,15 +118,15 @@ class ModelLoader:
         
         paths = self.get_model_path(symbol, timeframe, model_type)
         
-        # 載入模型
+        # 加載模型
         logger.info(f"Loading model: {symbol} {timeframe} ({model_type})")
         model = keras.models.load_model(paths['model'])
         
-        # 載入 scaler
+        # 加載 scaler
         with open(paths['scaler'], 'rb') as f:
             scaler = pickle.load(f)
         
-        # 載入特徵列表
+        # 加載特徵列表
         with open(paths['features'], 'rb') as f:
             features = pickle.load(f)
         
@@ -184,9 +187,9 @@ class ModelLoader:
         y_pred = 1 if y_prob > 0.5 else 0
         
         return {
-            'prediction': y_pred,
+            'prediction': int(y_pred),
             'probability': float(y_prob),
-            'confidence': max(y_prob, 1 - y_prob),
+            'confidence': float(max(y_prob, 1 - y_prob)),
             'signal': '看漲 (Breakout)' if y_pred == 1 else '看跌 (No Breakout)',
             'strength': float(y_prob) if y_pred == 1 else float(1 - y_prob)
         }
@@ -224,7 +227,7 @@ class ModelSelector:
     
     def _load_results(self):
         """
-        載入訓練結果
+        加載訓練結果
         """
         if not self.results_file.exists():
             return {}
@@ -299,10 +302,10 @@ class ModelSelector:
         
         return {
             'count': len(results_list),
-            'mean_accuracy': np.mean(accuracies),
-            'mean_auc': np.mean(aucs),
-            'best_accuracy': np.max(accuracies),
-            'best_auc': np.max(aucs),
-            'worst_accuracy': np.min(accuracies),
-            'worst_auc': np.min(aucs)
+            'mean_accuracy': float(np.mean(accuracies)),
+            'mean_auc': float(np.mean(aucs)),
+            'best_accuracy': float(np.max(accuracies)),
+            'best_auc': float(np.max(aucs)),
+            'worst_accuracy': float(np.min(accuracies)),
+            'worst_auc': float(np.min(aucs))
         }
