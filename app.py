@@ -6,7 +6,7 @@ BB 通道預測可視化 Web 應用
 功能:
   - 加載訓練好的模型
   - 預測 BB 通道突破
-  - 实时顯示預測結果和可信度
+  - 實時顯示預測結果和可信度
   - 可視化技術指標和 BB 通道
 
 運行:
@@ -51,7 +51,7 @@ app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False
 app.config['JSON_SORT_KEYS'] = False
 
-# 全局變数
+# 全局變數
 data_loader = DataLoader()
 feature_engineer = FeatureEngineer()
 model_loader = ModelLoader()
@@ -131,7 +131,7 @@ def predict():
         model_type = data.get('model_type', 'transformer')
         
         if not symbol or not timeframe:
-            return jsonify({'status': 'error', 'message': '缺少必要參数'}), 400
+            return jsonify({'status': 'error', 'message': '缺少必要參數'}), 400
         
         logger.info(f"Predicting for {symbol} {timeframe}")
         
@@ -151,7 +151,7 @@ def predict():
             return jsonify({'status': 'error', 'message': '數據不足'}), 400
         
         # 生成圖表
-        chart_data = generate_chart(df, symbol, timeframe, prediction)
+        chart_json = generate_chart_json(df, symbol, timeframe, prediction)
         
         # 準備統計數據
         stats = {
@@ -161,7 +161,7 @@ def predict():
             'last_price': float(df['close'].iloc[-1]),
             'last_time': str(df.index[-1]),
             'bb_upper': float(df['bb_upper_20'].iloc[-1]) if 'bb_upper_20' in df.columns else None,
-            'bb_middle': float(df['close'].iloc[-1]),  # 使用当前价格作为BB中线的佋子
+            'bb_middle': float(df['close'].iloc[-1]),  # 使用當前價格作為 BB 中線的例子
             'bb_lower': float(df['bb_lower_20'].iloc[-1]) if 'bb_lower_20' in df.columns else None,
         }
         
@@ -169,14 +169,14 @@ def predict():
             'status': 'success',
             'prediction': prediction,
             'stats': stats,
-            'chart': chart_data
+            'chart': chart_json
         })
     
     except FileNotFoundError as e:
         logger.error(f"Model not found: {e}")
         return jsonify({'status': 'error', 'message': f'模型不存在: {e}'}), 404
     except Exception as e:
-        logger.error(f"Prediction error: {e}")
+        logger.error(f"Prediction error: {e}", exc_info=True)
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
@@ -185,7 +185,7 @@ def get_chart():
     """
     API: 獲取 K 線圖表 (支持參數調整)
     
-    請求參数:
+    請求參數:
       - symbol: 幣種符號
       - timeframe: 時間框架
       - days: 顯示最近 N 天的數據
@@ -208,18 +208,18 @@ def get_chart():
             df = df[df.index >= cutoff_date]
         
         # 生成圖表
-        chart_data = generate_chart(df, symbol, timeframe)
+        chart_json = generate_chart_json(df, symbol, timeframe)
         
         return jsonify({
             'status': 'success',
-            'chart': chart_data
+            'chart': chart_json
         })
     except Exception as e:
         logger.error(f"Chart error: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
-def generate_chart(df, symbol, timeframe, prediction=None):
+def generate_chart_json(df, symbol, timeframe, prediction=None):
     """
     生成 K 線圖表，包含 BB 通道和技術指標
     
@@ -230,9 +230,9 @@ def generate_chart(df, symbol, timeframe, prediction=None):
         prediction: 預測結果（可選）
     
     Returns:
-        Plotly JSON 数据
+        Plotly 圖表的 JSON 字符串
     """
-    # 确保指標存在
+    # 確保指標存在
     if 'bb_upper_20' not in df.columns:
         df = feature_engineer.generate_all_features(df)
     
@@ -244,7 +244,7 @@ def generate_chart(df, symbol, timeframe, prediction=None):
         row_heights=[0.7, 0.3]
     )
     
-    # K 線图
+    # K 線圖
     fig.add_trace(
         go.Candlestick(
             x=df.index,
@@ -252,23 +252,22 @@ def generate_chart(df, symbol, timeframe, prediction=None):
             high=df['high'],
             low=df['low'],
             close=df['close'],
-            name='K线',
+            name='K線',
             increasing_line_color='green',
             decreasing_line_color='red'
         ),
         row=1, col=1
     )
     
-    # BB 中线 (20日標准剧)
-    bb_middle_col = 'bb_upper_20'  # 使用存在的列
+    # BB 中線 (20日標準差)
     if 'bb_upper_20' in df.columns:
-        # 计算中线 (SMA 20)
+        # 計算中線 (SMA 20)
         bb_middle = df['close'].rolling(20).mean()
         fig.add_trace(
             go.Scatter(
                 x=df.index,
                 y=bb_middle,
-                name='BB 中线',
+                name='BB 中線',
                 line=dict(color='blue', width=1),
                 mode='lines'
             ),
@@ -315,24 +314,24 @@ def generate_chart(df, symbol, timeframe, prediction=None):
             row=2, col=1
         )
         
-        # RSI 过买/过卖线
+        # RSI 過買/過賣線
         fig.add_hline(y=70, line_dash='dash', line_color='red', 
-                     annotation_text='过买', row=2, col=1)
+                     annotation_text='過買', row=2, col=1)
         fig.add_hline(y=30, line_dash='dash', line_color='green',
-                     annotation_text='过卖', row=2, col=1)
+                     annotation_text='過賣', row=2, col=1)
     
-    # 如果有预渫结果，添加标题
+    # 如果有預測結果，添加標題
     title = f"{symbol} {timeframe} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     if prediction:
         signal = prediction.get('signal', '')
         prob = prediction.get('probability', 0)
         title += f" | {signal} (概率: {prob:.2%})"
     
-    # 更新图表布局
+    # 更新圖表布局
     fig.update_layout(
         title=title,
-        xaxis_title="时间",
-        yaxis_title="价格",
+        xaxis_title="時間",
+        yaxis_title="價格",
         height=600,
         template='plotly_white',
         hovermode='x unified',
@@ -341,8 +340,9 @@ def generate_chart(df, symbol, timeframe, prediction=None):
     
     fig.update_yaxes(title_text="RSI", row=2, col=1)
     
-    # 转换为 JSON
-    return plotly.io.to_json(fig)
+    # 轉換為 JSON (重要：使用 to_json 而不是 to_html)
+    # 這樣前端可以用 Plotly.newPlot() 來渲染
+    return json.loads(plotly.io.to_json(fig))
 
 
 @app.route('/api/stats')
@@ -356,7 +356,7 @@ def get_stats():
         stats = model_selector.get_model_stats(symbol=symbol)
         
         if not stats:
-            return jsonify({'status': 'error', 'message': '没有統計数据'}), 404
+            return jsonify({'status': 'error', 'message': '沒有統計數據'}), 404
         
         return jsonify({
             'status': 'success',
@@ -389,22 +389,22 @@ def get_recommended():
 
 @app.errorhandler(404)
 def not_found(e):
-    return render_template('error.html', error='页面不存在'), 404
+    return render_template('error.html', error='頁面不存在'), 404
 
 
 @app.errorhandler(500)
 def server_error(e):
-    return render_template('error.html', error='服勊器错误'), 500
+    return render_template('error.html', error='服務器錯誤'), 500
 
 
 if __name__ == '__main__':
     print("\n" + "="*80)
-    print("BB 通道預測可視化 Web 应用")
+    print("BB 通道預測可視化 Web 應用")
     print("="*80)
-    print("\n正在启动服务器...")
-    print("打开浏覽器: http://localhost:5000\n")
+    print("\n正在啟動服務器...")
+    print("打開瀏覽器: http://localhost:5000\n")
     
-    # 启动 Flask 应用
+    # 啟動 Flask 應用
     app.run(
         host='0.0.0.0',
         port=5000,
