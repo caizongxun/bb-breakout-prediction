@@ -180,7 +180,7 @@ class ModelConverter:
         
         Args:
             model: 要保存的模型
-            output_path: 输出路径
+            output_path: 输出目录
             model_name: 模型名称
         
         Returns:
@@ -189,12 +189,12 @@ class ModelConverter:
         try:
             output_path = Path(output_path)
             output_path.mkdir(parents=True, exist_ok=True)
-            saved_model_path = output_path / model_name
             
             # 方法 1: 使用 tf.saved_model.save (最可靠)
+            # 重要：直接保存到 output_path，不要创建子目录
             try:
                 logger.info(f"Attempting Method 1: tf.saved_model.save...")
-                tf.saved_model.save(model, str(saved_model_path))
+                tf.saved_model.save(model, str(output_path))
                 logger.info(f"✓ Model saved with tf.saved_model.save")
                 return True
             except Exception as e1:
@@ -203,9 +203,9 @@ class ModelConverter:
                 # 方法 2: 使用 model.save() with h5 格式
                 try:
                     logger.info(f"Attempting Method 2: model.save() with h5...")
-                    h5_path = output_path / f"{model_name}.h5"
+                    h5_path = output_path.parent / f"{model_name}.h5"
                     model.save(str(h5_path))
-                    logger.info(f"✓ Model saved as H5 format")
+                    logger.info(f"✓ Model saved as H5 format: {h5_path}")
                     return True
                 except Exception as e2:
                     logger.warning(f"model.save() failed: {e2}")
@@ -216,7 +216,7 @@ class ModelConverter:
                         import keras.saving
                         keras.saving.save_model(
                             model,
-                            str(saved_model_path),
+                            str(output_path),
                             save_format='keras'
                         )
                         logger.info(f"✓ Model saved with keras.saving.save_model")
@@ -289,14 +289,13 @@ class ModelConverter:
             # 保存为新格式
             output_path = Path(output_path)
             output_path.mkdir(parents=True, exist_ok=True)
-            saved_model_path = output_path / model_name
             
             if not self.save_model_safe(model, output_path, model_name):
                 logger.error("Failed to save model")
                 return False
             
             # 验证
-            if not self.verify_saved_model(saved_model_path):
+            if not self.verify_saved_model(output_path):
                 logger.warning("Verification failed, but model was saved")
             
             # 保存模型信息
@@ -310,7 +309,7 @@ class ModelConverter:
                 'total_params': model.count_params()
             }
             
-            info_path = output_path / f"{model_name}_info.json"
+            info_path = output_path.parent / f"{model_name}_info.json"
             with open(info_path, 'w') as f:
                 json.dump(info, f, indent=2)
             
@@ -346,6 +345,7 @@ class ModelConverter:
         
         for h5_path, symbol, timeframe, model_type in models:
             model_name = f"{symbol}_{timeframe}_{model_type}"
+            # 重要：直接保存到 model_name 目录，不要嵌套
             output_path = self.output_dir / model_name
             
             success = self.convert_model(h5_path, output_path, model_name)
