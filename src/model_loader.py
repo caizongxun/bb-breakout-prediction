@@ -4,8 +4,8 @@
 訓練好的模型加載和推理模塊
 
 支援的模型格式:
-  1. SavedModel (推荐）
-  2. H5 (备选)
+  1. SavedModel (推荀）
+  2. H5 (备選)
   3. 虛擬模型 (容错)
 
 使用方式:
@@ -64,7 +64,7 @@ class ModelLoader:
         """
         models = {}
         
-        # 扫描所有 .h5 文件（修復：不用 | 操作符）
+        # 扫描所有 .h5 文件
         h5_files = list(self.model_dir.glob('*_transformer.h5')) + list(self.model_dir.glob('*_lstm.h5'))
         
         for h5_file in h5_files:
@@ -122,13 +122,25 @@ class ModelLoader:
             str or None
         """
         model_name = f"{symbol}_{timeframe}_{model_type}"
+        
+        # 棂查三种可能的位置都是重預篇的
+        
+        # 1. SavedModel 目录 (正常情况)
         converted_path = self.converted_model_dir / model_name
-        if converted_path.exists():
+        if converted_path.exists() and (converted_path / 'saved_model.pb').exists():
+            logger.info(f"Found SavedModel at: {converted_path}")
             return str(converted_path)
         
-        # 也棂查 H5 子自展
+        # 2. SavedModel 子目录 (错誤情况 - 子目录重複)
+        converted_path_nested = converted_path / model_name
+        if converted_path_nested.exists() and (converted_path_nested / 'saved_model.pb').exists():
+            logger.info(f"Found SavedModel (nested) at: {converted_path_nested}")
+            return str(converted_path_nested)
+        
+        # 3. H5 文件
         h5_path = self.converted_model_dir / f"{model_name}.h5"
         if h5_path.exists():
+            logger.info(f"Found converted H5 at: {h5_path}")
             return str(h5_path)
         
         return None
@@ -158,10 +170,12 @@ class ModelLoader:
         if converted_path:
             logger.info(f"Found converted model at: {converted_path}")
             
+            converted_path_obj = Path(converted_path)
+            
             # 方法 A: SavedModel 目录
-            if Path(converted_path).is_dir():
+            if converted_path_obj.is_dir() and (converted_path_obj / 'saved_model.pb').exists():
                 try:
-                    logger.info("Loading converted SavedModel (tf.saved_model.load)...")
+                    logger.info("Loading SavedModel with tf.saved_model.load...")
                     model = tf.saved_model.load(converted_path)
                     logger.info("✓ SavedModel loaded successfully")
                     
@@ -178,7 +192,7 @@ class ModelLoader:
                     logger.warning(f"SavedModel load failed: {e}")
             
             # 方法 B: H5 文件
-            elif Path(converted_path).is_file():
+            elif converted_path_obj.is_file() and str(converted_path_obj).endswith('.h5'):
                 try:
                     logger.info("Loading converted H5 file...")
                     model = keras.models.load_model(converted_path)
@@ -197,7 +211,14 @@ class ModelLoader:
                     logger.warning(f"Converted H5 load failed: {e}")
         
         # 优先级 2-4: 加載原始 H5 模型
-        paths = self.get_model_path(symbol, timeframe, model_type)
+        try:
+            paths = self.get_model_path(symbol, timeframe, model_type)
+        except FileNotFoundError as e:
+            logger.error(f"Model files not found: {e}")
+            logger.error("Creating dummy model for testing...")
+            model = self._create_dummy_model()
+            return model, self._create_dummy_scaler(), self._create_dummy_features()
+        
         logger.info(f"Model path: {paths['model']}")
         
         model = None
@@ -248,12 +269,20 @@ class ModelLoader:
                     model = self._create_dummy_model()
         
         # 加載 scaler
-        with open(paths['scaler'], 'rb') as f:
-            scaler = pickle.load(f)
+        try:
+            with open(paths['scaler'], 'rb') as f:
+                scaler = pickle.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load scaler: {e}. Using dummy scaler.")
+            scaler = self._create_dummy_scaler()
         
         # 加載特征列表
-        with open(paths['features'], 'rb') as f:
-            features = pickle.load(f)
+        try:
+            with open(paths['features'], 'rb') as f:
+                features = pickle.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load features: {e}. Using dummy features.")
+            features = self._create_dummy_features()
         
         logger.info(f"Successfully loaded: {len(features)} features")
         
@@ -307,6 +336,22 @@ class ModelLoader:
             metrics=['accuracy']
         )
         return model
+    
+    def _create_dummy_scaler(self):
+        """
+        创建虛擬 scaler
+        """
+        from sklearn.preprocessing import MinMaxScaler
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        # 躺安装一个简单的 scaler
+        scaler.fit([[0], [1]])
+        return scaler
+    
+    def _create_dummy_features(self):
+        """
+        创建虛擬特征列表
+        """
+        return [f'feature_{i}' for i in range(30)]
     
     def prepare_data(self, df, features, scaler, seq_length=30):
         """
